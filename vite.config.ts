@@ -12,6 +12,14 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // SDK do Firebase num arquivo próprio: muda pouco e fica em cache entre deploys
+        manualChunks: { firebase: ['firebase/app', 'firebase/firestore', 'firebase/auth'] },
+      },
+    },
+  },
   css: {
     preprocessorOptions: {
       scss: {

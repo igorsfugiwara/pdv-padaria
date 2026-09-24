@@ -6,3 +6,8 @@ dist
 
 # Local Netlify folder
 .netlify
+
+# Firebase
+.firebase/
+firebase-debug*.log
+firestore-debug.log

@@ -207,15 +207,15 @@ const subtitle = computed(() => {
 })
 
 // --- Venda direta ---
-function newDirectSale() {
-  const s = comandas.openDirectSale()
+async function newDirectSale() {
+  const s = await comandas.openDirectSale()
   selectedId.value = s.id
   addFor.value = s
 }
 
-function cancelEmpty() {
+async function cancelEmpty() {
   if (!selected.value) return
-  comandas.cancel(selected.value.id)
+  await comandas.cancel(selected.value.id)
   selectedId.value = null
   toast.add('Comanda cancelada.', 'info')
 }

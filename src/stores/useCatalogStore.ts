@@ -1,30 +1,46 @@
 import { defineStore } from 'pinia'
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
+import { orderBy, limit } from 'firebase/firestore'
 import type { Insumo, OrderItem, Product, StockMove } from '@/types'
-import { persisted } from '@/db/persisted'
-import { liveSeed } from '@/db/seed'
+import { useCollection } from '@/db/collection'
+import { isStaffScope } from '@/db/context'
+import { localSeed } from '@/db/seed'
 import { useTenantBundle } from '@/mock/tenants'
 import { indexInsumos, fullRecipe, unitCost, defaultChoices } from '@/lib/recipe'
 import { newId } from '@/lib/ids'
 
-// Cardápio + ficha técnica + insumos. Vender baixa os insumos da receita
-// (incluindo os adicionais escolhidos) e um insumo zerado esgota o produto.
+// Cardápio + ficha técnica + insumos. Os insumos baixam quando a cozinha começa
+// o preparo (ou na venda direta do caixa). O cliente não lê o estoque: para ele,
+// o "esgotado por falta de insumo" vem do campo `stockOut`, mantido pela equipe.
 export const useCatalogStore = defineStore('catalog', () => {
   const bundle = useTenantBundle()
   const categories = computed(() => bundle.categories)
 
-  const { data: products,   commit: commitProducts } = persisted<Product[]>('products', () => bundle.seedProducts())
-  const { data: insumos,    commit: commitInsumos }  = persisted<Insumo[]>('insumos', () => bundle.seedInsumos())
-  const { data: stockMoves, commit: commitMoves }    = persisted<StockMove[]>('stock-moves', () => liveSeed().stockMoves)
+  const productsColl = useCollection<Product>('products', {
+    local: () => localSeed().collections.products,
+    sources: () => [{ kind: 'query', key: 'all', constraints: [] }],
+  })
+  const insumosColl = useCollection<Insumo>('insumos', {
+    local: () => localSeed().collections.insumos,
+    sources: () => (isStaffScope() ? [{ kind: 'query', key: 'all', constraints: [] }] : []),
+  })
+  const movesColl = useCollection<StockMove>('stockMoves', {
+    local: () => localSeed().collections.stockMoves,
+    sources: () => (isStaffScope() ? [{ kind: 'query', key: 'recent', constraints: [orderBy('createdAt', 'desc'), limit(300)] }] : []),
+  })
 
-  const insumoIndex = computed(() => indexInsumos(insumos.value))
-  const productById = computed(() => new Map(products.value.map((p) => [p.id, p])))
+  const products   = productsColl.items
+  const insumos    = insumosColl.items
+  const stockMoves = computed(() => [...movesColl.items.value].sort((a, b) => b.createdAt.localeCompare(a.createdAt)))
 
+  const insumoIndex    = computed(() => indexInsumos(insumos.value))
+  const productById    = computed(() => new Map(products.value.map((p) => [p.id, p])))
   const activeProducts = computed(() => products.value.filter((p) => p.active))
+  const stockVisible   = computed(() => isStaffScope() && insumos.value.length > 0)
 
-  // Insumo da receita base sem saldo para uma unidade → produto esgotado automaticamente
+  // Insumo da receita base sem saldo para uma unidade → produto esgotado
   function missingInsumo(p: Product): Insumo | null {
-    for (const line of p.recipe) {
+    for (const line of fullRecipe(p, defaultChoices(p))) {
       const i = insumoIndex.value.get(line.insumoId)
       if (i && i.stock < line.qty) return i
     }
@@ -32,80 +48,91 @@ export const useCatalogStore = defineStore('catalog', () => {
   }
 
   function isOrderable(p: Product): boolean {
-    return p.active && p.available && !missingInsumo(p)
+    if (!p.active || !p.available) return false
+    return stockVisible.value ? !missingInsumo(p) : !p.stockOut
   }
 
-  // Custo da configuração padrão (para listagens e margem)
   function baseCost(p: Product): number {
     return unitCost(p, defaultChoices(p), insumoIndex.value)
   }
 
   const lowStock = computed(() => insumos.value.filter((i) => i.stock <= i.minStock))
 
-  // --- Produtos ---
-  function updateProduct(id: string, patch: Partial<Product>): void {
-    const i = products.value.findIndex((p) => p.id === id)
-    if (i >= 0) {
-      products.value[i] = { ...products.value[i], ...patch }
-      commitProducts()
+  // A equipe mantém o `stockOut` dos produtos em dia para o app do cliente
+  let flagTimer: ReturnType<typeof setTimeout> | null = null
+  function syncStockFlags() {
+    if (!stockVisible.value) return
+    let changed = false
+    for (const p of products.value) {
+      const out = !!missingInsumo(p)
+      if (!!p.stockOut !== out) { p.stockOut = out; changed = true }
     }
+    if (changed) productsColl.commit()
+  }
+  watch(insumoIndex, () => {
+    if (flagTimer) clearTimeout(flagTimer)
+    flagTimer = setTimeout(syncStockFlags, 400)
+  })
+
+  // --- Produtos ---
+  async function updateProduct(id: string, patch: Partial<Product>): Promise<void> {
+    const p = products.value.find((x) => x.id === id)
+    if (!p) return
+    Object.assign(p, patch)
+    await productsColl.commit()
   }
 
-  function addProduct(data: Omit<Product, 'id'>): Product {
+  async function addProduct(data: Omit<Product, 'id'>): Promise<Product> {
     const p = { ...data, id: newId() }
-    products.value.push(p)
-    commitProducts()
+    await productsColl.add(p)
     return p
   }
 
-  function toggleAvailable(id: string): void {
+  async function toggleAvailable(id: string): Promise<void> {
     const p = productById.value.get(id)
-    if (p) updateProduct(id, { available: !p.available })
+    if (p) await updateProduct(id, { available: !p.available })
   }
 
   // --- Estoque ---
-  function consume(items: OrderItem[]): void {
+  async function consume(items: OrderItem[]): Promise<void> {
+    const deltas = new Map<string, number>()
     for (const item of items) {
+      if (item.cancelled) continue
       const p = productById.value.get(item.productId)
       if (!p) continue
       for (const line of fullRecipe(p, item.choices)) {
-        const ins = insumos.value.find((x) => x.id === line.insumoId)
-        if (ins) ins.stock = Math.round((ins.stock - line.qty * item.quantity) * 1000) / 1000
+        deltas.set(line.insumoId, (deltas.get(line.insumoId) ?? 0) + line.qty * item.quantity)
       }
     }
-    commitInsumos()
+    await Promise.all([...deltas].map(([id, qty]) => insumosColl.increment(id, 'stock', -qty)))
   }
 
-  function addMove(move: Omit<StockMove, 'id' | 'insumoName' | 'createdAt'>): void {
+  async function addMove(move: Omit<StockMove, 'id' | 'insumoName' | 'createdAt'>): Promise<void> {
     const ins = insumos.value.find((x) => x.id === move.insumoId)
     if (!ins) return
     // Compra e produção com custo recalculam o custo médio ponderado
     if (move.qty > 0 && move.unitCost !== undefined && ins.stock + move.qty > 0) {
       const before = Math.max(ins.stock, 0)
       ins.avgCost  = Math.round((before * ins.avgCost + move.qty * move.unitCost) / (before + move.qty))
+      await insumosColl.commit()
     }
-    ins.stock = Math.round((ins.stock + move.qty) * 1000) / 1000
-    stockMoves.value.unshift({ ...move, id: newId(), insumoName: ins.name, createdAt: new Date().toISOString() })
-    commitInsumos()
-    commitMoves()
+    await insumosColl.increment(ins.id, 'stock', move.qty)
+    await movesColl.add({ ...move, id: newId(), insumoName: ins.name, createdAt: new Date().toISOString() })
   }
 
-  function updateInsumo(id: string, patch: Partial<Insumo>): void {
-    const i = insumos.value.findIndex((x) => x.id === id)
-    if (i >= 0) {
-      insumos.value[i] = { ...insumos.value[i], ...patch }
-      commitInsumos()
-    }
+  async function updateInsumo(id: string, patch: Partial<Insumo>): Promise<void> {
+    const i = insumos.value.find((x) => x.id === id)
+    if (!i) return
+    Object.assign(i, patch)
+    await insumosColl.commit()
   }
 
-  function addInsumo(data: Omit<Insumo, 'id'>): Insumo {
+  async function addInsumo(data: Omit<Insumo, 'id'>): Promise<Insumo> {
     const ins = { ...data, id: newId() }
-    insumos.value.push(ins)
-    commitInsumos()
+    await insumosColl.add(ins)
     return ins
   }
 
-  // Produtos que usam o insumo (base ou adicional)
   function productsUsing(insumoId: string): Product[] {
     return products.value.filter((p) =>
       p.recipe.some((l) => l.insumoId === insumoId) ||
@@ -118,5 +145,6 @@ export const useCatalogStore = defineStore('catalog', () => {
     missingInsumo, isOrderable, baseCost,
     updateProduct, addProduct, toggleAvailable,
     consume, addMove, updateInsumo, addInsumo, productsUsing,
+    ready: productsColl.ready,
   }
 })

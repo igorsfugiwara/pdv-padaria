@@ -126,7 +126,7 @@
             <tr v-for="u in staff.users" :key="u.id">
               <td data-label="Nome">{{ u.name }}</td>
               <td data-label="Perfil">{{ roleLabels[u.role] }}</td>
-              <td data-label="PIN" class="num">{{ u.pin }}</td>
+              <td data-label="PIN" class="num">{{ pinOf(u.pin) }}</td>
               <td class="actions">
                 <button v-if="u.id !== staff.user?.id" class="ghost-btn" @click="staff.removeUser(u.id)">Remover</button>
               </td>
@@ -158,7 +158,7 @@
     title="Recriar dados de exemplo"
     message="Todos os dados de teste desta loja serão apagados em todas as abas abertas. Continuar?"
     confirm-label="Apagar e recriar"
-    @confirm="resetTenantData"
+    @confirm="reset"
     @cancel="showReset = false"
   />
 </template>
@@ -169,7 +169,8 @@ import type { Role, Settings } from '@/types'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useStaffStore }    from '@/stores/useStaffStore'
 import { useToastStore }    from '@/stores/useToastStore'
-import { resetTenantData } from '@/db/persisted'
+import { resetTenantData } from '@/db/seed'
+import { firebaseEnabled } from '@/firebase'
 import { parseComandaCode } from '@/lib/comanda'
 import { roleLabels } from '@/lib/format'
 import AppButton  from '@/components/ui/AppButton.vue'
@@ -186,7 +187,8 @@ const customerUrl = `${window.location.origin}/${tenant.slug}`
 
 function update(patch: Partial<Settings>) {
   settingsStore.update(patch)
-  toast.add('Configuração salva.', 'success')
+    .then(() => toast.add('Configuração salva.', 'success'))
+    .catch(() => toast.add('Não foi possível salvar a configuração.', 'error'))
 }
 
 type NumericKey = 'warnMinutes' | 'lateMinutes' | 'tables' | 'serviceFeePercent' | 'comandaMin' | 'comandaMax' | 'nfceSeries'
@@ -225,6 +227,20 @@ function addUser() {
 }
 
 const showReset = ref(false)
+
+async function reset() {
+  showReset.value = false
+  toast.add('Recriando os dados de exemplo…', 'info')
+  try {
+    await resetTenantData()
+  } catch (err) {
+    console.error(err)
+    toast.add('Não foi possível recriar os dados. Veja o console.', 'error')
+  }
+}
+
+// No Firestore o PIN não volta para o navegador (fica em staffPins, ilegível)
+const pinOf = (pin?: string) => (firebaseEnabled || !pin ? '••••' : pin)
 </script>
 
 <style lang="scss" scoped>

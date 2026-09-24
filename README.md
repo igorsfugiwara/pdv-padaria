@@ -6,7 +6,10 @@ como num e-commerce e o pedido vai **direto para a cozinha**. O salão só leva 
 caixa recebe na saída. O produto é white-label: cada estabelecimento aparece com o próprio nome.
 A loja de demonstração é o **Cortiço**.
 
-> Fase atual: **validação de layout e fluxo**. Todos os dados são mockados, sem backend.
+> Fase atual: **validação de fluxo com dados reais no Firestore**. O conteúdo da loja Cortiço é de
+> demonstração; os 30 dias de histórico dos relatórios ainda são gerados no navegador.
+
+No ar: https://pdv-padaria.netlify.app (cada push na `main` publica sozinho).
 
 ## Módulos
 
@@ -55,10 +58,39 @@ npm run dev            # http://localhost:5173
 npm run dev:celular    # https na rede local, para abrir a câmera no celular
 ```
 
-Para validar o fluxo inteiro, abra no mesmo navegador uma aba para cada papel: cliente em
-`/cortico`, cozinha em `/cortico/cozinha`, salão em `/cortico/salao` e caixa em
-`/cortico/admin`. Os dados sincronizam entre as abas, e o login da equipe vale só para a aba em
-que foi feito.
+Com um `.env.local` com as chaves `VITE_FIREBASE_*`, o app usa o Firestore. Sem ele (ou com
+`VITE_DATA_BACKEND=local`), roda no modo mock, com tudo no localStorage do navegador.
+
+## Firebase
+
+Projeto `pdv-autoatendimento`, Firestore em `southamerica-east1` (São Paulo).
+
+```bash
+npm run deploy:firebase   # publica firestore.rules e liga o login anônimo
+npm run seed:firestore    # carga inicial da loja de demonstração (só enquanto ela não existe)
+npm run check:rules       # confere as regras contra o banco real, como visitante anônimo
+```
+
+- **Dados:** cada loja fica em `tenants/{slug}`. O doc da loja guarda as configurações; as
+  subcoleções guardam o resto (`products`, `insumos`, `stockMoves`, `comandas`, `orders`,
+  `cashierSessions`, `cashMovements`, `staff`, `staffPins`, `sessions`, `counters`,
+  `openComandas`).
+- **Cliente:** entra com login anônimo, lê só o cardápio e acompanha a própria comanda e os
+  próprios pedidos pelo id. Só cria pedido em comanda aberta.
+- **Equipe:** acertar o PIN cria `sessions/{uid}`. Quem confere o PIN são as regras, contra
+  `staffPins`, que nenhum cliente consegue ler. Cada coleção exige o perfil certo: a cozinha
+  não mexe no caixa, e só a gerência altera configurações e equipe.
+- **Concorrência:** a senha do dia, a NFC-e e a venda direta usam contadores em transação. O
+  estoque baixa com incremento atômico, e cada gravação envia só os campos alterados.
+- **Estoque:** os insumos baixam quando a cozinha inicia o preparo (ou na venda direta do
+  caixa). O cliente não lê o estoque; o "esgotado por falta de insumo" chega a ele pelo campo
+  `stockOut` do produto, mantido pela equipe.
+
+## Testando o fluxo
+
+Abra um aparelho, ou uma aba, para cada papel: cliente em `/cortico`, cozinha em
+`/cortico/cozinha`, salão em `/cortico/salao` e caixa em `/cortico/admin`. Os dados sincronizam
+em tempo real entre todos eles, e o login da equipe vale só para a aba em que foi feito.
 
 PINs de demonstração: Cozinha **1111** · Salão **2222** · Caixa **3333** · Gerência **0000**.
 Comanda de teste: **042**. A comanda **013** está bloqueada.
@@ -71,7 +103,8 @@ e TypeScript.
 ```
 src/
   mock/            dados da loja (cortico/), seed do dia e histórico de 30 dias
-  db/              coleções persistidas por loja (localStorage + sync entre abas) e seed atômico
+  db/              coleções (Firestore ou mock), contadores, seed da demonstração
+  firebase/        inicialização e login anônimo
   stores/          catálogo+estoque, comandas, pedidos, caixa, equipe, cliente, sacola
   lib/             ficha técnica, relatórios, tempos, NFC-e, formatação, permissões por módulo
   pages/           customer/, staff/ (login, cozinha, salão), admin/
@@ -86,12 +119,16 @@ src/
   histórico não mudar quando o custo médio mudar.
 - **Histórico:** os 30 dias anteriores são gerados de forma determinística na memória (sempre
   iguais) e não ocupam o localStorage.
-- **Backend:** cada `persisted()` em `src/db/persisted.ts` vira uma coleção com `onSnapshot` no
-  Firestore, como no Casa Ó. As stores já concentram toda a escrita.
+- **Camada de dados:** `src/db/collection.ts` dá a mesma interface às stores nos dois modos
+  (Firestore ou mock). Cada coleção assina o que o aparelho pode ver: a equipe vê a operação
+  inteira, o cliente só a própria comanda.
 
 ## Fora do escopo do mock (próximos passos)
 
-- Backend em tempo real, autenticação real da equipe e cadastro de lojas
+- Login da equipe com conta própria (hoje: PIN de 4 dígitos por loja, validado nas regras) e App Check
+- Cadastro de lojas pelo próprio app
+- Relatórios com o histórico real do Firestore (hoje: dias anteriores gerados no navegador)
+- Preço do pedido do cliente conferido no servidor (hoje: o app calcula e o caixa confere)
 - NFC-e real (hoje: chave no layout oficial com DV, ambiente de homologação simulado)
 - Edição de adicionais no editor de produto (hoje vêm do cadastro inicial)
 - Push notification de "pedido pronto" com a tela bloqueada

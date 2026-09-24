@@ -1,0 +1,116 @@
+rules_version = '2';
+
+// PDV de autoatendimento multi-loja.
+// Todo mundo entra com login anônimo. O cliente só lê o cardápio e a própria
+// comanda (pelo id, que é aleatório) e só cria pedido em comanda aberta.
+// A equipe ganha uma sessão ao acertar o PIN — conferido AQUI, contra
+// staffPins, que ninguém consegue ler — e cada coleção exige o perfil certo.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    // $(x) vale um segmento só: cada caminho é montado por extenso
+    function pinPath(t, id)     { return /databases/$(database)/documents/tenants/$(t)/staffPins/$(id); }
+    function staffPath(t, id)   { return /databases/$(database)/documents/tenants/$(t)/staff/$(id); }
+    function comandaPath(t, id) { return /databases/$(database)/documents/tenants/$(t)/comandas/$(id); }
+    function sessionPath(t) { return /databases/$(database)/documents/tenants/$(t)/sessions/$(request.auth.uid); }
+
+    function isStaff(t)        { return signedIn() && exists(sessionPath(t)); }
+    function hasRole(t, roles) { return isStaff(t) && get(sessionPath(t)).data.role in roles; }
+    function isManager(t)      { return hasRole(t, ['gerente']); }
+
+    // Primeira carga da loja de demonstração: liberada só enquanto o doc da
+    // loja não existe (o seed grava o doc da loja por último e a porta fecha)
+    function bootstrapping(t) {
+      return t in ['cortico'] && !exists(/databases/$(database)/documents/tenants/$(t));
+    }
+
+    match /tenants/{t} {
+      allow get: if true;
+      allow create: if bootstrapping(t);
+      allow update: if isManager(t);
+
+      // Cardápio: público para leitura
+      match /products/{id} {
+        allow read: if true;
+        allow write: if isStaff(t) || bootstrapping(t);
+      }
+
+      // Equipe: nomes e perfis são públicos (tela de login); PINs, jamais
+      match /staff/{id} {
+        allow read: if true;
+        allow write: if isManager(t) || bootstrapping(t);
+      }
+      match /staffPins/{id} {
+        allow read: if false;
+        allow write: if isManager(t) || bootstrapping(t);
+      }
+
+      // Sessão da equipe: só nasce com o PIN e o perfil corretos
+      match /sessions/{uid} {
+        allow get, delete: if signedIn() && request.auth.uid == uid;
+        allow create: if signedIn() && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly(['staffId', 'role', 'pin', 'createdAt'])
+          && request.resource.data.pin == get(pinPath(t, request.resource.data.staffId)).data.pin
+          && request.resource.data.role == get(staffPath(t, request.resource.data.staffId)).data.role;
+      }
+
+      // Custos, estoque e caixa: só a equipe
+      match /insumos/{id} {
+        allow read, write: if isStaff(t) || bootstrapping(t);
+      }
+      match /stockMoves/{id} {
+        allow read, write: if isStaff(t) || bootstrapping(t);
+      }
+      match /cashierSessions/{id} {
+        allow read: if isStaff(t);
+        allow write: if hasRole(t, ['caixa', 'gerente']) || bootstrapping(t);
+      }
+      match /cashMovements/{id} {
+        allow read: if isStaff(t);
+        allow write: if hasRole(t, ['caixa', 'gerente']) || bootstrapping(t);
+      }
+
+      // Senha do dia: o cliente incrementa ao enviar o pedido
+      match /counters/{name} {
+        allow get: if signedIn();
+        allow write: if isStaff(t) || bootstrapping(t)
+          || (name == 'orders' && signedIn() && request.resource.data.keys().hasOnly(['day', 'seq']));
+      }
+
+      // Índice "número do cartão → comanda aberta", para entrar na mesma comanda
+      match /openComandas/{number} {
+        allow get: if signedIn();
+        allow create: if (signedIn() && request.resource.data.keys().hasOnly(['sessionId'])) || isStaff(t) || bootstrapping(t);
+        // índice velho (comanda já fechada) pode ser reaproveitado pelo cliente
+        allow update: if isStaff(t)
+          || (signedIn() && request.resource.data.keys().hasOnly(['sessionId'])
+              && get(comandaPath(t, resource.data.sessionId)).data.status != 'open');
+        allow delete: if isStaff(t);
+      }
+
+      match /comandas/{id} {
+        allow get: if signedIn();
+        allow list: if isStaff(t);
+        allow create: if isStaff(t) || bootstrapping(t)
+          || (signedIn() && request.resource.data.status == 'open' && request.resource.data.origin == 'cliente');
+        // o cliente só mexe no próprio nome, no local e na lista de pedidos, com a comanda aberta
+        allow update: if isStaff(t)
+          || (signedIn() && resource.data.status == 'open' && request.resource.data.status == 'open'
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['customerName', 'destination', 'orderIds']));
+        allow delete: if isStaff(t);
+      }
+
+      match /orders/{id} {
+        allow get: if signedIn();
+        allow list: if isStaff(t);
+        allow create: if isStaff(t) || bootstrapping(t)
+          || (signedIn()
+              && request.resource.data.origin == 'cliente'
+              && request.resource.data.status == 'received'
+              && get(comandaPath(t, request.resource.data.comandaId)).data.status == 'open');
+        allow update, delete: if isStaff(t);
+      }
+    }
+  }
+}

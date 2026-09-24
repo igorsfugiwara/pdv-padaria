@@ -67,7 +67,7 @@
           autocomplete="off"
           placeholder="000"
         />
-        <AppButton type="submit" size="xl" :disabled="!manual.trim()">Entrar</AppButton>
+        <AppButton type="submit" size="xl" :disabled="!manual.trim()" :loading="entering">Entrar</AppButton>
       </div>
     </form>
 
@@ -124,9 +124,9 @@ const welcome = ref(false)
 const name    = ref('')
 const closedNotice = computed(() => route.query.encerrada === '1')
 
-const { video, state, start, stop, resume } = useComandaScanner((raw) => {
+const { video, state, start, stop, resume } = useComandaScanner(async (raw) => {
   // Código lido mas inválido: mostra o motivo e volta a ler em seguida
-  if (!enter(raw)) setTimeout(resume, 1800)
+  if (!(await enter(raw))) setTimeout(resume, 1800)
 })
 
 const blocked = computed(() => ['denied', 'no-camera', 'insecure', 'error'].includes(state.value))
@@ -138,8 +138,20 @@ const blockedMessage = computed(() => ({
   error:       'Não foi possível abrir a câmera. Tente de novo ou digite o número abaixo.',
 } as Record<string, string>)[state.value] ?? '')
 
-function enter(raw: string): boolean {
-  const result = customer.activate(raw)
+const entering = ref(false)
+
+async function enter(raw: string): Promise<boolean> {
+  if (entering.value) return false
+  entering.value = true
+  let result
+  try {
+    result = await customer.activate(raw)
+  } catch {
+    error.value = 'Sem conexão para registrar a comanda. Tente de novo.'
+    return false
+  } finally {
+    entering.value = false
+  }
   if (!result.ok) {
     error.value = result.reason
     navigator.vibrate?.([40, 60, 40])
@@ -157,7 +169,7 @@ function submitManual() {
 }
 
 function goToMenu() {
-  if (name.value.trim()) customer.setName(name.value)
+  if (name.value.trim()) customer.setName(name.value).catch(() => {})
   welcome.value = false
   router.replace({ name: 'menu' })
 }

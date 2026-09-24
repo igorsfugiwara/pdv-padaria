@@ -31,6 +31,7 @@
         <span v-for="i in 4" :key="i" :class="['pin-dots__dot', { 'pin-dots__dot--on': pin.length >= i }]" />
       </div>
       <p v-if="error" class="pin-error">PIN incorreto. Tente de novo.</p>
+      <p v-else-if="checking" class="pin-checking">Conferindo…</p>
 
       <div class="keypad">
         <button v-for="k in ['1','2','3','4','5','6','7','8','9']" :key="k" class="keypad__key" @click="press(k)">{{ k }}</button>
@@ -81,9 +82,14 @@ function press(k: string) {
   if (pin.value.length === 4) submit()
 }
 
-function submit() {
-  if (!selected.value) return
-  if (staff.login(selected.value.id, pin.value)) {
+const checking = ref(false)
+
+async function submit() {
+  if (!selected.value || checking.value) return
+  checking.value = true
+  const ok = await staff.login(selected.value.id, pin.value)
+  checking.value = false
+  if (ok) {
     const redirect = router.currentRoute.value.query.redirect
     router.replace(typeof redirect === 'string' ? redirect : { name: homeRoute[selected.value.role] })
   } else {
@@ -217,6 +223,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 }
 
 .pin-error { text-align: center; font-size: 0.8125rem; color: var(--color-danger); }
+.pin-checking { text-align: center; font-size: 0.8125rem; color: var(--color-text-muted); }
 
 .keypad {
   display: grid;

@@ -172,7 +172,7 @@ const canConfirm = computed(() => {
 async function confirm() {
   if (!props.session || !canConfirm.value || !cashier.active) return
   paying.value = true
-  await new Promise((r) => setTimeout(r, 400))    // simula autorização da maquininha / SEFAZ
+  await new Promise((r) => setTimeout(r, 300))    // simula autorização da maquininha / SEFAZ
   const now = new Date()
   const payment: Payment = {
     subtotal:   subtotal.value,
@@ -190,11 +190,11 @@ async function confirm() {
   }
   if (method.value === 'misto') payment.parts = parts.value.map((p) => ({ ...p }))
   if (emitNfce.value) {
-    const number = comandas.nextNfceNumber()
+    const number = await comandas.nextNfceNumber()
     const series = settingsStore.settings.nfceSeries
     payment.nfce = { number, series, key: buildNfceKey(settingsStore.tenant.cnpj, series, number, now), issuedAt: payment.paidAt }
   }
-  comandas.close(props.session.id, payment)
+  await comandas.close(props.session.id, payment)
   paying.value = false
   emit('paid', comandas.byId.get(props.session.id)!)
 }

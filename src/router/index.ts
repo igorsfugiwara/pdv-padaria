@@ -56,7 +56,7 @@ const router = createRouter({
   ],
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   if (to.name === 'tenants') return
 
   const slug = String(to.params.loja ?? '')
@@ -67,8 +67,12 @@ router.beforeEach((to) => {
     return false
   }
 
+  // A equipe primeiro: o perfil da aba decide o que as coleções assinam
+  const staff = useStaffStore()
+
   // Cliente: sem comanda aberta não há cardápio
   const customer = useCustomerStore()
+  if (to.meta.requiresComanda || to.name === 'scan') await customer.resolve()
   if (to.meta.requiresComanda && !customer.isActive) {
     return { name: 'scan', params: { loja: slug }, query: customer.wasClosed ? { encerrada: '1' } : {} }
   }
@@ -77,7 +81,6 @@ router.beforeEach((to) => {
   }
 
   // Equipe: login por aba e permissão por perfil
-  const staff = useStaffStore()
   if (to.name === 'staff-login' && staff.role) {
     return { name: homeRoute[staff.role], params: { loja: slug } }
   }

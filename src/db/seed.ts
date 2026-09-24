@@ -1,45 +1,43 @@
+import { firebaseEnabled, firestore } from '@/firebase'
 import { useTenantBundle, bootTenantSlug } from '@/mock/tenants'
-import { buildLiveSeed, type LiveSeed } from '@/mock/seed-live'
 import { load, save, removeByPrefix } from '@/lib/storage'
-import { tenantPrefix } from './persisted'
+import { tenantPrefix } from './tenant'
+import { buildTenantSeed, type TenantSeed } from './seed-data'
+import { resetTenant } from './firestore-seed'
 
-// O "dia de hoje" precisa nascer inteiro de uma vez: comandas, pedidos e caixa
-// se referem uns aos outros por id. Semear coleção por coleção (na primeira vez
-// que cada tela usa uma) misturaria gerações diferentes entre abas.
+// Modo mock: a loja nasce inteira no localStorage na primeira carga
+let cached: TenantSeed | null = null
+
+export function localSeed(): TenantSeed {
+  if (!cached) cached = buildTenantSeed(useTenantBundle())
+  return cached
+}
+
 export function ensureTenantSeeded(): void {
-  if (!bootTenantSlug()) return
+  if (firebaseEnabled || !bootTenantSlug()) return
   const prefix = tenantPrefix()
   if (load<boolean>(prefix + 'seeded', false)) return
 
-  removeByPrefix(prefix)                       // restos de um seed parcial
-  const bundle   = useTenantBundle()
-  const products = bundle.seedProducts()
-  const insumos  = bundle.seedInsumos()
-  const live     = buildLiveSeed(products, insumos)
-  cached = live
-
-  const collections: Record<string, unknown> = {
-    'settings':         { ...bundle.settings },
-    'staff':            bundle.staff,
-    'products':         products,
-    'insumos':          insumos,
-    'stock-moves':      live.stockMoves,
-    'comandas':         live.comandas,
-    'orders':           live.orders,
-    'cashier-sessions': live.cashierSessions,
-    'cash-movements':   live.movements,
+  removeByPrefix(prefix)
+  const seed = localSeed()
+  const bundle = useTenantBundle()
+  save(prefix + 'settings', seed.settings)
+  // no modo mock o PIN fica junto do usuário
+  save(prefix + 'staff', bundle.staff)
+  for (const [name, list] of Object.entries(seed.collections)) {
+    if (name !== 'staff' && name !== 'staffPins') save(prefix + name, list)
   }
-  Object.entries(collections).forEach(([name, value]) => save(prefix + name, value))
   save(prefix + 'seeded', true)
 }
 
-// Fallback das coleções (ex.: localStorage indisponível): mesmo seed da carga
-let cached: LiveSeed | null = null
-
-export function liveSeed(): LiveSeed {
-  if (!cached) {
+// Botão "Recriar dados de exemplo"
+export async function resetTenantData(): Promise<void> {
+  if (firebaseEnabled) {
     const bundle = useTenantBundle()
-    cached = buildLiveSeed(bundle.seedProducts(), bundle.seedInsumos())
+    await resetTenant(firestore!, bundle.tenant, buildTenantSeed(bundle))
+  } else {
+    removeByPrefix(tenantPrefix())
   }
-  return cached
+  removeByPrefix(tenantPrefix(), sessionStorage)
+  window.location.reload()
 }

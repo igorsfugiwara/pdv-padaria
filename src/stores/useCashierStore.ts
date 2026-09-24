@@ -1,8 +1,11 @@
 import { defineStore } from 'pinia'
 import { computed } from 'vue'
+import { orderBy, limit, where } from 'firebase/firestore'
 import type { CashierSession, CashMovement, ComandaSession, SimpleMethod } from '@/types'
-import { persisted } from '@/db/persisted'
-import { liveSeed } from '@/db/seed'
+import { useCollection } from '@/db/collection'
+import { isStaffScope } from '@/db/context'
+import { localSeed } from '@/db/seed'
+import { startOfDay } from '@/lib/format'
 import { newId } from '@/lib/ids'
 import { useComandasStore } from './useComandasStore'
 
@@ -17,35 +20,45 @@ export interface CashierSummary {
 }
 
 export const useCashierStore = defineStore('cashier', () => {
-  const { data: sessions,  commit: commitSessions }  = persisted<CashierSession[]>('cashier-sessions', () => liveSeed().cashierSessions)
-  const { data: movements, commit: commitMovements } = persisted<CashMovement[]>('cash-movements', () => liveSeed().movements)
+  const sessionsColl = useCollection<CashierSession>('cashierSessions', {
+    local: () => localSeed().collections.cashierSessions,
+    sources: () => (isStaffScope() ? [{ kind: 'query', key: 'recent', constraints: [orderBy('openedAt', 'desc'), limit(30)] }] : []),
+  })
+  const movementsColl = useCollection<CashMovement>('cashMovements', {
+    local: () => localSeed().collections.cashMovements,
+    sources: () => {
+      if (!isStaffScope()) return []
+      const since = new Date(startOfDay().getTime() - 35 * 86_400_000).toISOString()
+      return [{ kind: 'query', key: `since-${since}`, constraints: [where('createdAt', '>=', since)] }]
+    },
+  })
+  const sessions  = sessionsColl.items
+  const movements = computed(() => [...movementsColl.items.value].sort((a, b) => b.createdAt.localeCompare(a.createdAt)))
 
-  const active = computed(() => sessions.value.find((s) => !s.closedAt) ?? null)
+  const active  = computed(() => sessions.value.find((s) => !s.closedAt) ?? null)
   const history = computed(() =>
     sessions.value.filter((s) => s.closedAt).sort((a, b) => b.openedAt.localeCompare(a.openedAt))
   )
 
-  function open(operator: string, openingBalance: number): void {
+  async function open(operator: string, openingBalance: number): Promise<void> {
     if (active.value) return
-    sessions.value.push({ id: newId(), operator, openingBalance, openedAt: new Date().toISOString() })
-    commitSessions()
+    await sessionsColl.add({ id: newId(), operator, openingBalance, openedAt: new Date().toISOString() })
   }
 
-  function close(countedCash: number, notes?: string): void {
+  async function close(countedCash: number, notes?: string): Promise<void> {
     const s = active.value
     if (!s) return
     s.closedAt    = new Date().toISOString()
     s.countedCash = countedCash
     s.notes       = notes?.trim() || undefined
-    commitSessions()
+    await sessionsColl.commit()
   }
 
-  function addMovement(type: CashMovement['type'], amount: number, reason: string, operator: string): void {
+  async function addMovement(type: CashMovement['type'], amount: number, reason: string, operator: string): Promise<void> {
     if (!active.value) return
-    movements.value.unshift({
+    await movementsColl.add({
       id: newId(), sessionId: active.value.id, type, amount, reason: reason.trim(), operator, createdAt: new Date().toISOString(),
     })
-    commitMovements()
   }
 
   function paidComandas(sessionId: string): ComandaSession[] {

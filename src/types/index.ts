@@ -29,7 +29,7 @@ export interface StaffUser {
   id: string
   name: string
   role: Role
-  pin: string
+  pin?: string          // só no modo mock; no Firestore o PIN fica em staffPins (ilegível)
 }
 
 // ─── Cardápio e ficha técnica ───────────────────────────────────────────────
@@ -86,6 +86,7 @@ export interface Product {
   tags?: string[]
   options?: OptionGroup[]
   recipe: RecipeLine[]
+  stockOut?: boolean     // sem insumo para a receita base; mantido pela equipe (o cliente não lê o estoque)
 }
 
 // ─── Comanda, pedido e pagamento ─────────────────────────────────────────────
@@ -144,6 +145,7 @@ export interface Order {
   readyAt?: string
   deliveredAt?: string
   deliveredBy?: Role
+  consumedAt?: string    // quando a ficha técnica baixou os insumos (ao iniciar o preparo)
 }
 
 export type PaymentMethod = 'pix' | 'dinheiro' | 'debito' | 'credito' | 'voucher' | 'misto'
@@ -181,6 +183,7 @@ export interface ComandaSession {
   openedAt: string
   closedAt?: string
   payment?: Payment
+  orderIds?: string[]    // pedidos da comanda (o cliente assina cada um pelo id)
 }
 
 // ─── Caixa e estoque ─────────────────────────────────────────────────────────
