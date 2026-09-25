@@ -8,7 +8,7 @@ import type { TenantSeed } from './seed-data'
 
 const COLLECTIONS = [
   'products', 'insumos', 'stockMoves', 'comandas', 'openComandas', 'orders',
-  'cashierSessions', 'cashMovements', 'counters', 'staff', 'staffPins',
+  'cashierSessions', 'cashMovements', 'counters', 'staff', 'staffPins', 'nfce',
 ] as const
 
 function plain(v: unknown): Record<string, unknown> {
@@ -39,9 +39,13 @@ export async function resetTenant(db: Firestore, tenant: Tenant, seed: TenantSee
   const base = `tenants/${tenant.slug}`
   for (const name of COLLECTIONS) {
     if (name === 'staffPins') continue    // ilegível por regra; os PINs do seed são regravados abaixo
-    const snap = await getDocs(collection(db, `${base}/${name}`))
-    await inChunks(snap.docs, 20, (d) => deleteDoc(d.ref))
-    if (name === 'staff') await inChunks(snap.docs, 20, (d) => deleteDoc(doc(db, `${base}/staffPins`, d.id)))
+    try {
+      const snap = await getDocs(collection(db, `${base}/${name}`))
+      await inChunks(snap.docs, 20, (d) => deleteDoc(d.ref))
+      if (name === 'staff') await inChunks(snap.docs, 20, (d) => deleteDoc(doc(db, `${base}/staffPins`, d.id)))
+    } catch (err) {
+      throw new Error(`Não foi possível limpar "${name}": ${(err as Error).message}`)
+    }
   }
   await writeTenantSeed(db, tenant, seed)
 }

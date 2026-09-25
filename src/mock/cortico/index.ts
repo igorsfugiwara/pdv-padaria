@@ -1,6 +1,7 @@
 import type { Settings, StaffUser, Tenant } from '@/types'
 import { categories, seedProducts } from './menu'
 import { seedInsumos } from './insumos'
+import { fiscalConfig, productFiscal } from './fiscal'
 
 export const tenant: Tenant = {
   slug:      'cortico',
@@ -27,7 +28,11 @@ export const settings: Settings = {
   comandaMin:        1,
   comandaMax:        300,
   blockedComandas:   ['013'],
-  nfceSeries:        1,
+  fiscal:            fiscalConfig,
 }
 
-export const catalog = { categories, seedProducts, seedInsumos }
+export const catalog = {
+  categories,
+  seedInsumos,
+  seedProducts: () => seedProducts().map((p) => ({ ...p, fiscal: productFiscal[p.id] ? { ...productFiscal[p.id] } : undefined })),
+}

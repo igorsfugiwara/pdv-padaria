@@ -74,6 +74,7 @@ service cloud.firestore {
       // Senha do dia: o cliente incrementa ao enviar o pedido
       match /counters/{name} {
         allow get: if signedIn();
+        allow list: if isStaff(t);
         allow write: if isStaff(t) || bootstrapping(t)
           || (name == 'orders' && signedIn() && request.resource.data.keys().hasOnly(['day', 'seq']));
       }
@@ -81,6 +82,7 @@ service cloud.firestore {
       // Índice "número do cartão → comanda aberta", para entrar na mesma comanda
       match /openComandas/{number} {
         allow get: if signedIn();
+        allow list: if isStaff(t);
         allow create: if (signedIn() && request.resource.data.keys().hasOnly(['sessionId'])) || isStaff(t) || bootstrapping(t);
         // índice velho (comanda já fechada) pode ser reaproveitado pelo cliente
         allow update: if isStaff(t)
@@ -99,6 +101,11 @@ service cloud.firestore {
           || (signedIn() && resource.data.status == 'open' && request.resource.data.status == 'open'
               && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['customerName', 'destination', 'orderIds']));
         allow delete: if isStaff(t);
+      }
+
+      // NFC-e: guarda CPF de cliente e dados fiscais — só caixa e gerência
+      match /nfce/{id} {
+        allow read, write: if hasRole(t, ['caixa', 'gerente']) || bootstrapping(t);
       }
 
       match /orders/{id} {

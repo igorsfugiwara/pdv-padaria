@@ -9,6 +9,35 @@ export interface Tenant {
   cnpj: string          // fictício no mock, usado na NFC-e simulada
 }
 
+// ─── Fiscal (NFC-e modelo 65) ────────────────────────────────────────────────
+
+export type FiscalAmbiente = 'simulado' | 'homologacao' | 'producao'
+export type FiscalProviderId = 'simulado' | 'focusnfe'
+
+export interface FiscalConfig {
+  provider: FiscalProviderId
+  ambiente: FiscalAmbiente         // 'simulado' só com provider 'simulado'
+  razaoSocial: string
+  nomeFantasia: string
+  cnpj: string
+  inscricaoEstadual: string
+  crt: 1 | 3                       // 1 = Simples Nacional (CSOSN) · 3 = Regime normal (CST)
+  endereco: {
+    logradouro: string
+    numero: string
+    bairro: string
+    municipio: string
+    codigoMunicipio: string        // IBGE, 7 dígitos
+    uf: string
+    cep: string
+  }
+  serie: number
+  cancelamentoMinutos: number      // prazo legal de cancelamento (SP: 30)
+  contingenciaHoras: number        // prazo para transmitir nota em contingência (24)
+  taxaServicoNaNota: boolean       // taxa de serviço entra como "outras despesas"
+  informacoesAdicionais?: string
+}
+
 export interface Settings {
   staffTheme: 'escuro' | 'claro'
   warnMinutes: number        // salão/cozinha: card fica em atenção a partir daqui
@@ -18,7 +47,7 @@ export interface Settings {
   comandaMin: number
   comandaMax: number
   blockedComandas: string[]  // cartões perdidos ou danificados
-  nfceSeries: number
+  fiscal: FiscalConfig
 }
 
 // ─── Equipe ──────────────────────────────────────────────────────────────────
@@ -73,6 +102,23 @@ export interface Category {
   name: string
 }
 
+// Tributação do produto. Quem define é o contador: `revisado` marca o que ele conferiu.
+export interface ProductFiscal {
+  ncm: string                      // 8 dígitos
+  cest?: string                    // 7 dígitos, quando há substituição tributária
+  cfop: string                     // 5101 produção própria · 5102 revenda · 5405 revenda com ST
+  origem: string                   // 0 nacional … 8
+  csosn?: string                   // CRT 1: 102, 103, 300, 400, 500, 900
+  cstIcms?: string                 // CRT 3: 00, 20, 40, 41, 60…
+  aliquotaIcms?: number            // CRT 3, em %
+  unidade: 'UN' | 'KG' | 'L'
+  gtin?: string                    // código de barras; sem ele vai "SEM GTIN"
+  cstPisCofins?: string            // quando o contador pedir (senão, o padrão do provedor)
+  ibsCbsCst?: string               // reforma tributária (IBS/CBS), quando obrigatório
+  ibsCbsClassTrib?: string
+  revisado: boolean
+}
+
 export interface Product {
   id: string
   name: string
@@ -87,6 +133,7 @@ export interface Product {
   options?: OptionGroup[]
   recipe: RecipeLine[]
   stockOut?: boolean     // sem insumo para a receita base; mantido pela equipe (o cliente não lê o estoque)
+  fiscal?: ProductFiscal
 }
 
 // ─── Comanda, pedido e pagamento ─────────────────────────────────────────────
@@ -151,11 +198,43 @@ export interface Order {
 export type PaymentMethod = 'pix' | 'dinheiro' | 'debito' | 'credito' | 'voucher' | 'misto'
 export type SimpleMethod = Exclude<PaymentMethod, 'misto'>
 
+// Resumo da nota guardado no pagamento da comanda (o documento completo fica em `nfce`)
 export interface Nfce {
+  ref?: string           // id do documento fiscal (= referência no provedor)
+  status?: NfceStatus
+  ambiente?: FiscalAmbiente
   number: number
   series: number
-  key: string            // chave de acesso fictícia (44 dígitos)
+  key: string            // chave de acesso (44 dígitos)
   issuedAt: string
+}
+
+export type NfceStatus = 'pendente' | 'autorizada' | 'rejeitada' | 'cancelada' | 'contingencia'
+
+export interface NfceDoc {
+  id: string             // referência única no provedor
+  comandaId: string
+  comandaNumber: string
+  status: NfceStatus
+  provider: FiscalProviderId
+  ambiente: FiscalAmbiente
+  total: number          // centavos
+  cpf?: string
+  numero?: number
+  serie?: number
+  chave?: string
+  protocolo?: string
+  mensagem?: string      // motivo da rejeição ou retorno da SEFAZ
+  codigoSefaz?: string
+  qrcodeUrl?: string
+  urlConsulta?: string
+  danfeUrl?: string
+  xmlUrl?: string
+  criadaEm: string
+  autorizadaEm?: string
+  tentativas: number
+  operador: string
+  cancelamento?: { em: string; justificativa: string; por: string; protocolo?: string }
 }
 
 export interface Payment {

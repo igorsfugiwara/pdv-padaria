@@ -89,6 +89,72 @@
         </div>
       </section>
 
+      <section class="editor__section">
+        <div class="editor__head">
+          <h3 class="eyebrow">Fiscal · NFC-e</h3>
+          <AppBadge :tone="fiscalIssues.length ? 'danger' : fiscalDraft.revisado ? 'success' : 'warning'">
+            {{ fiscalIssues.length ? 'Incompleto' : fiscalDraft.revisado ? 'Revisado pelo contador' : 'A revisar' }}
+          </AppBadge>
+        </div>
+        <div class="form-grid">
+          <div class="field">
+            <span class="field__label">NCM (8 dígitos)</span>
+            <input v-model="fiscalDraft.ncm" class="input" inputmode="numeric" maxlength="10" placeholder="19059090" />
+          </div>
+          <div class="field">
+            <span class="field__label">CEST (se houver ST)</span>
+            <input v-model="fiscalDraft.cest" class="input" inputmode="numeric" maxlength="9" placeholder="—" />
+          </div>
+          <div class="field">
+            <span class="field__label">CFOP</span>
+            <select v-model="fiscalDraft.cfop" class="select">
+              <option v-for="o in cfopOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+            </select>
+          </div>
+          <div v-if="crt === 1" class="field">
+            <span class="field__label">CSOSN (Simples Nacional)</span>
+            <select v-model="fiscalDraft.csosn" class="select">
+              <option v-for="o in csosnOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+            </select>
+          </div>
+          <template v-else>
+            <div class="field">
+              <span class="field__label">CST do ICMS</span>
+              <select v-model="fiscalDraft.cstIcms" class="select">
+                <option v-for="o in cstIcmsOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+              </select>
+            </div>
+            <div class="field">
+              <span class="field__label">Alíquota do ICMS (%)</span>
+              <input v-model.number="fiscalDraft.aliquotaIcms" class="input" type="number" min="0" max="35" step="0.01" />
+            </div>
+          </template>
+          <div class="field">
+            <span class="field__label">Origem</span>
+            <select v-model="fiscalDraft.origem" class="select">
+              <option v-for="o in origemOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+            </select>
+          </div>
+          <div class="field">
+            <span class="field__label">Unidade</span>
+            <select v-model="fiscalDraft.unidade" class="select">
+              <option value="UN">UN · unidade</option>
+              <option value="KG">KG · quilo</option>
+              <option value="L">L · litro</option>
+            </select>
+          </div>
+          <div class="field">
+            <span class="field__label">Código de barras (GTIN)</span>
+            <input v-model="fiscalDraft.gtin" class="input" inputmode="numeric" maxlength="14" placeholder="SEM GTIN" />
+          </div>
+        </div>
+        <p v-if="fiscalIssues.length" class="editor__issues">{{ fiscalIssues.join(' · ') }}</p>
+        <label class="toggle">
+          <button type="button" :class="['switch', { 'switch--on': fiscalDraft.revisado }]" role="switch" :aria-checked="fiscalDraft.revisado" @click="fiscalDraft.revisado = !fiscalDraft.revisado" />
+          Conferido pelo contador
+        </label>
+      </section>
+
       <section v-if="draft.options?.length" class="editor__section">
         <h3 class="eyebrow">Adicionais e variações</h3>
         <div v-for="g in draft.options" :key="g.id" class="group">
@@ -116,7 +182,11 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import type { Product, RecipeLine } from '@/types'
+import type { Product, ProductFiscal, RecipeLine } from '@/types'
+import { useFiscalStore } from '@/stores/useFiscalStore'
+import { cfopOptions, csosnOptions, cstIcmsOptions, origemOptions } from '@/fiscal/codes'
+import { productFiscalIssues } from '@/fiscal/validate'
+import AppBadge from '@/components/ui/AppBadge.vue'
 import { useCatalogStore } from '@/stores/useCatalogStore'
 import { useToastStore }   from '@/stores/useToastStore'
 import { formatMoney, formatPercent, stationLabels } from '@/lib/format'
@@ -145,10 +215,18 @@ function blank(): Omit<Product, 'id'> {
 const draft    = ref<Omit<Product, 'id'>>(blank())
 const tagsText = ref('')
 
+// Tributação editada à parte e gravada junto
+const fiscalStore = useFiscalStore()
+const crt = computed(() => fiscalStore.config.crt)
+const blankFiscal = (): ProductFiscal => ({ ncm: '', cfop: '5101', origem: '0', csosn: '102', cstIcms: '00', unidade: 'UN', revisado: false })
+const fiscalDraft = ref<ProductFiscal>(blankFiscal())
+const fiscalIssues = computed(() => productFiscalIssues(fiscalDraft.value, crt.value))
+
 watch(() => props.product, (p) => {
   if (p === undefined) return
   draft.value    = p ? JSON.parse(JSON.stringify(p)) : blank()
   tagsText.value = (draft.value.tags ?? []).join(', ')
+  fiscalDraft.value = { ...blankFiscal(), ...(draft.value.fiscal ?? {}) }
 }, { immediate: true })
 
 // Receita guardada na unidade do insumo; editada em g/ml para ficar natural
@@ -181,6 +259,15 @@ function save() {
     name: draft.value.name.trim(),
     tags: tagsText.value.split(',').map((t) => t.trim()).filter(Boolean),
     recipe: draft.value.recipe.filter((l) => l.qty > 0),
+    fiscal: {
+      ...fiscalDraft.value,
+      ncm: fiscalDraft.value.ncm.replace(/\D/g, ''),
+      cest: fiscalDraft.value.cest?.replace(/\D/g, '') || undefined,
+      gtin: fiscalDraft.value.gtin?.replace(/\D/g, '') || undefined,
+      csosn: crt.value === 1 ? fiscalDraft.value.csosn : undefined,
+      cstIcms: crt.value === 3 ? fiscalDraft.value.cstIcms : undefined,
+      aliquotaIcms: crt.value === 3 ? fiscalDraft.value.aliquotaIcms : undefined,
+    },
   }
   if (props.product) {
     catalog.updateProduct(props.product.id, data)
@@ -203,6 +290,7 @@ function save() {
   &__head { @include flex-between; }
   &__toggles { display: flex; flex-wrap: wrap; gap: var(--spacing-lg); }
   &__empty { font-size: 0.8125rem; color: var(--color-text-muted); }
+  &__issues { font-size: 0.8125rem; color: var(--color-danger); }
 }
 
 .eyebrow { color: var(--color-accent-text); }

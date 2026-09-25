@@ -16,6 +16,7 @@ export const modules: ModuleDef[] = [
   { route: 'admin-dashboard',     label: 'Visão geral',   icon: '⊞', group: 'gestao',   roles: ['caixa', 'gerente'] },
   { route: 'admin-comandas',      label: 'Comandas',      icon: '≡', group: 'gestao',   roles: ['caixa', 'gerente'] },
   { route: 'admin-caixa',         label: 'Caixa',         icon: '⊟', group: 'gestao',   roles: ['caixa', 'gerente'] },
+  { route: 'admin-fiscal',        label: 'Fiscal',        icon: '§', group: 'gestao',   roles: ['caixa', 'gerente'] },
   { route: 'admin-cardapio',      label: 'Cardápio',      icon: '◫', group: 'gestao',   roles: ['caixa', 'gerente'] },
   { route: 'admin-estoque',       label: 'Estoque',       icon: '▦', group: 'gestao',   roles: ['cozinha', 'caixa', 'gerente'] },
   { route: 'admin-relatorios',    label: 'Relatórios',    icon: '↗', group: 'gestao',   roles: ['gerente'] },

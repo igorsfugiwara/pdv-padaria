@@ -44,6 +44,7 @@ const router = createRouter({
             staffRoute('',              'admin-dashboard',     () => import('@/pages/admin/DashboardPage.vue')),
             staffRoute('comandas',      'admin-comandas',      () => import('@/pages/admin/ComandasPage.vue')),
             staffRoute('caixa',         'admin-caixa',         () => import('@/pages/admin/CashierPage.vue')),
+            staffRoute('fiscal',        'admin-fiscal',        () => import('@/pages/admin/FiscalPage.vue')),
             staffRoute('cardapio',      'admin-cardapio',      () => import('@/pages/admin/MenuAdminPage.vue')),
             staffRoute('estoque',       'admin-estoque',       () => import('@/pages/admin/StockPage.vue')),
             staffRoute('relatorios',    'admin-relatorios',    () => import('@/pages/admin/ReportsPage.vue')),

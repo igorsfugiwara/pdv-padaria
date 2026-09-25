@@ -23,6 +23,7 @@
             <span v-if="m.route === 'admin-estoque' && catalog.lowStock.length" class="sidebar__badge">{{ catalog.lowStock.length }}</span>
             <span v-if="m.route === 'admin-comandas' && comandas.openSessions.length" class="sidebar__count">{{ comandas.openSessions.length }}</span>
             <span v-if="m.route === 'salon' && readyCount" class="sidebar__badge sidebar__badge--gold">{{ readyCount }}</span>
+            <span v-if="m.route === 'admin-fiscal' && fiscalAttention" class="sidebar__badge">{{ fiscalAttention }}</span>
           </RouterLink>
         </template>
       </nav>
@@ -65,6 +66,7 @@ import { useCatalogStore }  from '@/stores/useCatalogStore'
 import { useComandasStore } from '@/stores/useComandasStore'
 import { useCashierStore }  from '@/stores/useCashierStore'
 import { useOrderStore }    from '@/stores/useOrderStore'
+import { useFiscalStore }   from '@/stores/useFiscalStore'
 import { modulesFor, modules } from '@/lib/modules'
 import { roleLabels } from '@/lib/format'
 
@@ -87,6 +89,7 @@ const groups  = computed(() => [
 
 const title      = computed(() => modules.find((m) => m.route === route.name)?.label ?? '')
 const readyCount = computed(() => orders.active.filter((o) => o.status === 'ready').length)
+const fiscalAttention = computed(() => (staff.role === 'caixa' || staff.role === 'gerente' ? useFiscalStore().attention : 0))
 
 function logout() {
   staff.logout()

@@ -76,10 +76,24 @@
         </div>
       </template>
 
-      <label class="toggle">
-        <button type="button" :class="['switch', { 'switch--on': emitNfce }]" role="switch" :aria-checked="emitNfce" @click="emitNfce = !emitNfce" />
-        <span>Emitir NFC-e <small>(simulada)</small></span>
-      </label>
+      <div class="nfce-box">
+        <label class="toggle">
+          <button type="button" :class="['switch', { 'switch--on': emitNfce }]" role="switch" :aria-checked="emitNfce" @click="emitNfce = !emitNfce" />
+          <span>Emitir NFC-e <small>({{ ambienteLabels[fiscal.isReal ? fiscal.config.ambiente : 'simulado'] }})</small></span>
+        </label>
+        <div v-if="emitNfce" class="field nfce-box__cpf">
+          <span class="field__label">CPF na nota (opcional)</span>
+          <input
+            :value="cpf"
+            class="input"
+            inputmode="numeric"
+            placeholder="000.000.000-00"
+            maxlength="14"
+            @input="cpf = formatCpf(($event.target as HTMLInputElement).value)"
+          />
+          <span v-if="cpfError" class="field__error">CPF inválido</span>
+        </div>
+      </div>
     </div>
 
     <template #footer>
@@ -100,13 +114,17 @@ import { useCashierStore }  from '@/stores/useCashierStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useStaffStore }    from '@/stores/useStaffStore'
 import { formatMoney, methodLabels, comandaLabel } from '@/lib/format'
-import { buildNfceKey } from '@/lib/nfce'
+import { useFiscalStore } from '@/stores/useFiscalStore'
+import { ambienteLabels } from '@/fiscal/codes'
+import { formatCpf, isValidCpf, onlyDigits } from '@/fiscal/validate'
+import type { NfceDoc } from '@/types'
 import AppModal  from '@/components/ui/AppModal.vue'
 import AppInput  from '@/components/ui/AppInput.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 
 const props = defineProps<{ session: ComandaSession | null }>()
-const emit  = defineEmits<{ close: []; paid: [session: ComandaSession] }>()
+const emit  = defineEmits<{ close: []; paid: [session: ComandaSession, nfce: NfceDoc | null] }>()
+const fiscal = useFiscalStore()
 
 const orders   = useOrderStore()
 const comandas = useComandasStore()
@@ -125,7 +143,9 @@ const serviceOn       = ref(false)
 const received        = ref(0)
 const parts           = ref<{ method: SimpleMethod; amount: number }[]>([])
 const emitNfce        = ref(true)
+const cpf             = ref('')
 const paying          = ref(false)
+const cpfError        = computed(() => !!onlyDigits(cpf.value) && !isValidCpf(cpf.value))
 
 const servicePercent = computed(() => settingsStore.settings.serviceFeePercent || 10)
 
@@ -140,6 +160,7 @@ watch(() => props.session?.id, (id) => {
   received.value = 0
   parts.value = [{ method: 'pix', amount: 0 }, { method: 'credito', amount: 0 }]
   emitNfce.value = true
+  cpf.value = ''
 })
 
 const subtotal   = computed(() => (props.session ? orders.comandaSubtotal(props.session.id) : 0))
@@ -163,7 +184,7 @@ const quickCash = computed(() => {
 })
 
 const canConfirm = computed(() => {
-  if (!cashier.active || total.value <= 0) return false
+  if (!cashier.active || total.value <= 0 || (emitNfce.value && cpfError.value)) return false
   if (method.value === 'dinheiro') return change.value >= 0 && received.value > 0
   if (method.value === 'misto') return mixedRemaining.value === 0 && parts.value.every((p) => p.amount > 0)
   return true
@@ -189,14 +210,20 @@ async function confirm() {
     payment.change   = change.value
   }
   if (method.value === 'misto') payment.parts = parts.value.map((p) => ({ ...p }))
-  if (emitNfce.value) {
-    const number = await comandas.nextNfceNumber()
-    const series = settingsStore.settings.nfceSeries
-    payment.nfce = { number, series, key: buildNfceKey(settingsStore.tenant.cnpj, series, number, now), issuedAt: payment.paidAt }
-  }
+  // 1. A venda fica gravada primeiro: falha fiscal nunca desfaz o pagamento
   await comandas.close(props.session.id, payment)
+  const closed = comandas.byId.get(props.session.id)!
+  // 2. A NFC-e sai depois (autorizada, rejeitada ou pendente, tudo fica registrado)
+  let nfce: NfceDoc | null = null
+  if (emitNfce.value) {
+    try {
+      nfce = await fiscal.emitir(closed, { cpf: onlyDigits(cpf.value) || undefined })
+    } catch (err) {
+      console.error('[nfce]', err)
+    }
+  }
   paying.value = false
-  emit('paid', comandas.byId.get(props.session.id)!)
+  emit('paid', closed, nfce)
 }
 </script>
 
@@ -250,6 +277,17 @@ async function confirm() {
 }
 
 .text-danger { color: var(--color-danger); }
+
+.nfce-box {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+
+  &__cpf { max-width: 260px; }
+}
 
 .toggle {
   display: inline-flex;

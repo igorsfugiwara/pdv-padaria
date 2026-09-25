@@ -1,6 +1,7 @@
 import type {
-  CashierSession, CashMovement, ComandaSession, Insumo, Order, Product, Settings, StaffUser, StockMove,
+  CashierSession, CashMovement, ComandaSession, Insumo, NfceDoc, Order, Product, Settings, StaffUser, StockMove,
 } from '@/types'
+import { orderSubtotal } from '@/mock/build'
 import type { TenantBundle } from '@/mock/tenants'
 import { buildLiveSeed } from '@/mock/seed-live'
 import { indexInsumos, defaultChoices, fullRecipe } from '@/lib/recipe'
@@ -26,6 +27,7 @@ export interface TenantSeed {
     counters: Counter[]
     staff: StaffUser[]
     staffPins: StaffPin[]
+    nfce: NfceDoc[]
   }
 }
 
@@ -47,6 +49,20 @@ export function buildTenantSeed(bundle: TenantBundle): TenantSeed {
   // Pedidos que já passaram do "recebido" já consumiram insumos
   live.orders.forEach((o) => { if (o.status !== 'received') o.consumedAt = o.startedAt ?? o.createdAt })
   live.comandas.forEach((c) => { c.orderIds = live.orders.filter((o) => o.comandaId === c.id).map((o) => o.id) })
+
+  // Notas das comandas já pagas hoje (modo simulado), ligadas ao pagamento
+  const nfce: NfceDoc[] = []
+  for (const c of live.comandas) {
+    const n = c.payment?.nfce
+    if (!n) continue
+    const total = live.orders.filter((o) => o.comandaId === c.id).reduce((s, o) => s + orderSubtotal(o), 0)
+    nfce.push({
+      id: c.id, comandaId: c.id, comandaNumber: c.number, status: 'autorizada', provider: 'simulado', ambiente: 'simulado',
+      total, numero: n.number, serie: n.series, chave: n.key, criadaEm: n.issuedAt, autorizadaEm: n.issuedAt,
+      tentativas: 1, operador: c.payment!.operator,
+    })
+    Object.assign(n, { ref: c.id, status: 'autorizada', ambiente: 'simulado' })
+  }
 
   const today = dayKey()
   const lastOrder = live.orders.reduce((m, o) => Math.max(m, o.number), 0)
@@ -70,6 +86,7 @@ export function buildTenantSeed(bundle: TenantBundle): TenantSeed {
       ],
       staff:     bundle.staff.map(({ pin: _pin, ...u }) => u),
       staffPins: bundle.staff.map((u) => ({ id: u.id, pin: u.pin! })),
+      nfce,
     },
   }
 }

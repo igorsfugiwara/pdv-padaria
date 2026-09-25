@@ -150,7 +150,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useRoute } from 'vue-router'
-import type { ComandaSession, OrderStatus } from '@/types'
+import type { ComandaSession, NfceDoc, OrderStatus } from '@/types'
 import { useComandasStore } from '@/stores/useComandasStore'
 import { useOrderStore, statusLabels } from '@/stores/useOrderStore'
 import { useStaffStore }    from '@/stores/useStaffStore'
@@ -241,11 +241,14 @@ const addFor     = ref<ComandaSession | null>(null)
 const payFor     = ref<ComandaSession | null>(null)
 const receiptFor = ref<ComandaSession | null>(null)
 
-function onPaid(session: ComandaSession) {
+function onPaid(session: ComandaSession, nfce: NfceDoc | null) {
   payFor.value = null
   selectedId.value = null
   toast.add(`${comandaLabel(session.number)} fechada · ${formatMoney(session.payment!.total)}`, 'success')
-  if (session.payment?.nfce) receiptFor.value = session
+  if (!nfce) return
+  if (nfce.status === 'autorizada' || nfce.status === 'contingencia') receiptFor.value = session
+  else if (nfce.status === 'rejeitada') toast.add(`NFC-e rejeitada: ${nfce.mensagem ?? 'veja em Fiscal'}`, 'error')
+  else toast.add('NFC-e pendente: o provedor não respondeu. Consulte em Fiscal.', 'info')
 }
 </script>
 

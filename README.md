@@ -43,12 +43,13 @@ atrasado em cada mesa.
 
 **Administrativo.**
 - **Visão geral:** faturamento, comandas em aberto, tempo de cozinha, margem, pedidos por hora e estoque em alerta.
-- **Comandas:** abertas e fechadas, detalhe com pedidos, cancelamento de item com motivo, lançamento de itens e venda direta no balcão. O fechamento de conta aceita PIX, dinheiro com troco, débito, crédito, vale-refeição e pagamento misto, com desconto e taxa de serviço, e emite NFC-e simulada.
+- **Comandas:** abertas e fechadas, detalhe com pedidos, cancelamento de item com motivo, lançamento de itens e venda direta no balcão. O fechamento de conta aceita PIX, dinheiro com troco, débito, crédito, vale-refeição e pagamento misto, com desconto e taxa de serviço, e emite a NFC-e.
 - **Caixa:** abertura com fundo, sangria e suprimento, resumo por forma de pagamento e fechamento com conferência da gaveta.
+- **Fiscal (NFC-e):** emissão pela Focus NFe, com o modo simulado enquanto a loja não está credenciada. CPF na nota, reenvio, consulta, cancelamento com prazo e justificativa, e checklist do que falta para emitir de verdade. Passo a passo em [docs/FISCAL.md](docs/FISCAL.md).
 - **Cardápio:** preço, custo e margem por item. O editor de **ficha técnica** calcula CMV, margem e preço sugerido.
 - **Estoque:** por insumo, com compra, produção da casa, perda e ajuste por contagem. Mostra o consumo teórico do dia. Um produto esgota sozinho quando falta insumo.
 - **Relatórios:** hoje, 7 ou 30 dias. Faturamento, ticket médio, CMV, margem bruta, tempo de cozinha, formas de pagamento, categorias e produtos, com exportação em CSV.
-- **Configurações:** tempos de alerta, mesas, taxa de serviço, faixa de comandas e bloqueadas, série da NFC-e, equipe e PINs, e reset dos dados de exemplo.
+- **Configurações:** tempos de alerta, mesas, taxa de serviço, faixa de comandas e bloqueadas, equipe e PINs, e reset dos dados de exemplo.
 
 ## Rodando
 
@@ -69,11 +70,13 @@ Projeto `pdv-autoatendimento`, Firestore em `southamerica-east1` (São Paulo).
 npm run deploy:firebase   # publica firestore.rules e liga o login anônimo
 npm run seed:firestore    # carga inicial da loja de demonstração (só enquanto ela não existe)
 npm run check:rules       # confere as regras contra o banco real, como visitante anônimo
+npm run reset:demo -- --pin 0000   # recria o "dia de hoje" da demonstração (PIN da gerência)
+npm test                  # testes do módulo fiscal
 ```
 
 - **Dados:** cada loja fica em `tenants/{slug}`. O doc da loja guarda as configurações; as
   subcoleções guardam o resto (`products`, `insumos`, `stockMoves`, `comandas`, `orders`,
-  `cashierSessions`, `cashMovements`, `staff`, `staffPins`, `sessions`, `counters`,
+  `cashierSessions`, `cashMovements`, `nfce`, `staff`, `staffPins`, `sessions`, `counters`,
   `openComandas`).
 - **Cliente:** entra com login anônimo, lê só o cardápio e acompanha a própria comanda e os
   próprios pedidos pelo id. Só cria pedido em comanda aberta.
@@ -129,7 +132,7 @@ src/
 - Cadastro de lojas pelo próprio app
 - Relatórios com o histórico real do Firestore (hoje: dias anteriores gerados no navegador)
 - Preço do pedido do cliente conferido no servidor (hoje: o app calcula e o caixa confere)
-- NFC-e real (hoje: chave no layout oficial com DV, ambiente de homologação simulado)
+- Contingência offline da NFC-e sem internet na loja (ver docs/FISCAL.md)
 - Edição de adicionais no editor de produto (hoje vêm do cadastro inicial)
 - Push notification de "pedido pronto" com a tela bloqueada
 - Impressão das comandas físicas com QR/código de barras e ticket de cozinha

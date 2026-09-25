@@ -1,12 +1,16 @@
 <template>
-  <AppModal :model-value="!!session" title="NFC-e emitida" size="sm" @update:model-value="emit('close')">
-    <div v-if="session && payment" class="nfce">
-      <p class="nfce__env">EMITIDA EM AMBIENTE DE HOMOLOGAÇÃO — SEM VALOR FISCAL</p>
+  <AppModal :model-value="!!session" :title="title" size="sm" @update:model-value="emit('close')">
+    <div v-if="session && payment && nota" class="nfce">
+      <p v-if="nota.ambiente !== 'producao'" class="nfce__env">
+        {{ nota.ambiente === 'simulado' ? 'SIMULAÇÃO — SEM VALOR FISCAL' : 'EMITIDA EM AMBIENTE DE HOMOLOGAÇÃO — SEM VALOR FISCAL' }}
+      </p>
+      <p v-if="nota.status === 'cancelada'" class="nfce__env nfce__env--cancel">NFC-e CANCELADA</p>
+      <p v-if="nota.status === 'contingencia'" class="nfce__env">EMITIDA EM CONTINGÊNCIA — pendente de autorização</p>
 
       <header class="nfce__head">
-        <strong>{{ tenant.name.toUpperCase() }}</strong>
-        <span>CNPJ {{ tenant.cnpj }}</span>
-        <span>{{ tenant.city }}</span>
+        <strong>{{ config.razaoSocial.toUpperCase() }}</strong>
+        <span>CNPJ {{ config.cnpj }} · IE {{ config.inscricaoEstadual }}</span>
+        <span>{{ config.endereco.logradouro }}, {{ config.endereco.numero }} · {{ config.endereco.municipio }}/{{ config.endereco.uf }}</span>
         <span class="nfce__doc">Documento Auxiliar da Nota Fiscal de Consumidor Eletrônica</span>
       </header>
 
@@ -28,8 +32,8 @@
         <div><dt>Qtde. total de itens</dt><dd>{{ items.reduce((s, i) => s + i.quantity, 0) }}</dd></div>
         <div><dt>Valor total R$</dt><dd>{{ money(payment.subtotal) }}</dd></div>
         <div v-if="payment.discount"><dt>Desconto R$</dt><dd>−{{ money(payment.discount) }}</dd></div>
-        <div v-if="payment.serviceFee"><dt>Taxa de serviço R$</dt><dd>{{ money(payment.serviceFee) }}</dd></div>
-        <div class="nfce__grand"><dt>Valor a pagar R$</dt><dd>{{ money(payment.total) }}</dd></div>
+        <div v-if="payment.serviceFee && config.taxaServicoNaNota"><dt>Outras despesas R$</dt><dd>{{ money(payment.serviceFee) }}</dd></div>
+        <div class="nfce__grand"><dt>Valor a pagar R$</dt><dd>{{ money(notaTotal) }}</dd></div>
         <template v-if="payment.parts">
           <div v-for="p in payment.parts" :key="p.method"><dt>{{ methodLabels[p.method] }}</dt><dd>{{ money(p.amount) }}</dd></div>
         </template>
@@ -37,36 +41,36 @@
         <div v-if="payment.change"><dt>Troco R$</dt><dd>{{ money(payment.change) }}</dd></div>
       </dl>
 
-      <p class="nfce__center">Consulte pela chave de acesso em www.nfce.fazenda.sp.gov.br/consulta</p>
-      <p class="nfce__key">{{ formatKey(payment.nfce!.key) }}</p>
-      <p class="nfce__center">CONSUMIDOR NÃO IDENTIFICADO</p>
+      <p class="nfce__center">Consulte pela chave de acesso em<br />{{ nota.urlConsulta ?? 'www.nfce.fazenda.sp.gov.br/consulta' }}</p>
+      <p class="nfce__key">{{ nota.chave ? formatKey(nota.chave) : '—' }}</p>
+      <p class="nfce__center">{{ nota.cpf ? `CONSUMIDOR CPF ${formatCpf(nota.cpf)}` : 'CONSUMIDOR NÃO IDENTIFICADO' }}</p>
       <p class="nfce__center">
-        NFC-e nº {{ String(payment.nfce!.number).padStart(9, '0') }} · Série {{ String(payment.nfce!.series).padStart(3, '0') }}<br />
-        {{ new Date(payment.nfce!.issuedAt).toLocaleString('pt-BR') }}
+        NFC-e nº {{ String(nota.numero ?? 0).padStart(9, '0') }} · Série {{ String(nota.serie ?? config.serie).padStart(3, '0') }}<br />
+        {{ new Date(nota.autorizadaEm ?? nota.criadaEm).toLocaleString('pt-BR') }}
       </p>
+      <p v-if="nota.protocolo" class="nfce__center">Protocolo de autorização: {{ nota.protocolo }}</p>
 
-      <!-- QR ilustrativo, derivado da chave -->
-      <div class="nfce__qr" aria-hidden="true">
-        <span v-for="(on, i) in qrCells" :key="i" :class="{ on }" />
-      </div>
-      <p class="nfce__center nfce__small">Comanda {{ session.number }} · Operador {{ payment.operator }}</p>
+      <img v-if="qr" :src="qr" alt="QR Code da NFC-e" class="nfce__qr" />
+      <p class="nfce__center nfce__small">Comanda {{ session.number }} · Operador {{ nota.operador }}</p>
     </div>
 
     <template #footer>
       <AppButton variant="ghost" @click="emit('close')">Fechar</AppButton>
+      <AppButton v-if="nota?.danfeUrl" variant="outline" @click="openDanfe">DANFE do provedor</AppButton>
       <AppButton @click="print">Imprimir</AppButton>
     </template>
   </AppModal>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import type { ComandaSession } from '@/types'
+import { ref, computed, watch } from 'vue'
+import QRCode from 'qrcode'
+import type { ComandaSession, NfceDoc } from '@/types'
 import { useOrderStore }    from '@/stores/useOrderStore'
-import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useFiscalStore }   from '@/stores/useFiscalStore'
 import { methodLabels } from '@/lib/format'
 import { formatKey } from '@/lib/nfce'
-import { hashString, createRandom } from '@/lib/random'
+import { formatCpf } from '@/fiscal/validate'
 import AppModal  from '@/components/ui/AppModal.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 
@@ -74,29 +78,53 @@ const props = defineProps<{ session: ComandaSession | null }>()
 const emit  = defineEmits<{ close: [] }>()
 
 const orders = useOrderStore()
-const tenant = useSettingsStore().tenant
+const fiscal = useFiscalStore()
+const config = computed(() => fiscal.config)
 
 const payment = computed(() => props.session?.payment ?? null)
-const items   = computed(() =>
+
+// Documento fiscal completo; notas antigas só têm o resumo no pagamento
+const nota = computed<NfceDoc | null>(() => {
+  const s = props.session
+  const summary = s?.payment?.nfce
+  if (!s || !summary) return null
+  return fiscal.byId.get(summary.ref ?? s.id) ?? {
+    id: s.id, comandaId: s.id, comandaNumber: s.number, status: summary.status ?? 'autorizada',
+    provider: 'simulado', ambiente: summary.ambiente ?? 'simulado', total: s.payment!.total,
+    numero: summary.number, serie: summary.series, chave: summary.key, criadaEm: summary.issuedAt,
+    autorizadaEm: summary.issuedAt, tentativas: 1, operador: s.payment!.operator,
+  }
+})
+
+const title = computed(() => {
+  const n = nota.value
+  if (!n) return 'NFC-e'
+  return n.status === 'cancelada' ? 'NFC-e cancelada' : n.status === 'contingencia' ? 'NFC-e em contingência' : 'NFC-e emitida'
+})
+
+const items = computed(() =>
   props.session ? orders.byComanda(props.session.id).flatMap((o) => o.items).filter((i) => !i.cancelled) : []
 )
+const notaTotal = computed(() => {
+  const p = payment.value
+  if (!p) return 0
+  return p.subtotal - p.discount + (config.value.taxaServicoNaNota ? p.serviceFee : 0)
+})
 
 const money = (c: number) => (c / 100).toFixed(2).replace('.', ',')
 
-const qrCells = computed(() => {
-  const rnd = createRandom(hashString(payment.value?.nfce?.key ?? 'x'))
-  return Array.from({ length: 21 * 21 }, (_, i) => {
-    const x = i % 21, y = Math.floor(i / 21)
-    const finder = (cx: number, cy: number) => x >= cx && x < cx + 7 && y >= cy && y < cy + 7
-    if (finder(0, 0) || finder(14, 0) || finder(0, 14)) {
-      const lx = x % 7 === x ? x : x - 14, ly = y < 7 ? y : y - 14
-      const ring = lx === 0 || lx === 6 || ly === 0 || ly === 6
-      const core = lx >= 2 && lx <= 4 && ly >= 2 && ly <= 4
-      return ring || core
-    }
-    return rnd.chance(0.5)
-  })
-})
+// QR real (URL da SEFAZ devolvida pelo provedor). Na simulação, só um texto.
+const qr = ref('')
+watch(nota, async (n) => {
+  qr.value = ''
+  if (!n?.chave) return
+  const content = n.qrcodeUrl ?? `NFC-e simulada · chave ${n.chave}`
+  qr.value = await QRCode.toDataURL(content, { margin: 1, width: 180, errorCorrectionLevel: 'M' })
+}, { immediate: true })
+
+function openDanfe() {
+  if (nota.value?.danfeUrl) window.open(nota.value.danfeUrl, '_blank', 'noopener')
+}
 
 function print() {
   window.print()
@@ -122,6 +150,7 @@ function print() {
     font-weight: 700;
     padding: 4px;
     border: 1px dashed #111;
+    &--cancel { border-style: solid; font-size: 0.875rem; }
   }
 
   &__head {
@@ -131,7 +160,7 @@ function print() {
     text-align: center;
     padding-bottom: var(--spacing-sm);
     border-bottom: 1px dashed #999;
-    strong { font-size: 0.875rem; }
+    strong { font-size: 0.8125rem; }
   }
 
   &__doc { margin-top: 4px; font-size: 0.6875rem; }
@@ -154,17 +183,7 @@ function print() {
   &__center { text-align: center; }
   &__small { font-size: 0.6875rem; color: #555; }
   &__key { text-align: center; font-weight: 700; word-spacing: 2px; }
-
-  &__qr {
-    align-self: center;
-    display: grid;
-    grid-template-columns: repeat(21, 4px);
-    gap: 0;
-    padding: 6px;
-    background: #fff;
-    span { width: 4px; height: 4px; }
-    span.on { background: #111; }
-  }
+  &__qr { align-self: center; width: 180px; height: 180px; image-rendering: pixelated; }
 }
 </style>
 

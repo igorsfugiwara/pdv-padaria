@@ -105,16 +105,10 @@
       </section>
 
       <section class="panel">
-        <div class="panel__head"><h3>NFC-e</h3><AppBadge tone="warning">Simulada</AppBadge></div>
-        <div class="panel__body form-grid">
-          <div class="field">
-            <span class="field__label">Série</span>
-            <input class="input" type="number" min="1" :value="s.nfceSeries" @change="numberSetting('nfceSeries', $event)" />
-          </div>
-          <div class="field">
-            <span class="field__label">Ambiente</span>
-            <input class="input" value="Homologação (sem valor fiscal)" disabled />
-          </div>
+        <div class="panel__head"><h3>NFC-e</h3><AppBadge :tone="settingsStore.settings.fiscal.ambiente === 'producao' ? 'success' : 'warning'">{{ ambienteLabels[settingsStore.settings.fiscal.ambiente] }}</AppBadge></div>
+        <div class="panel__body form-stack">
+          <p class="muted">Emitente, série, provedor fiscal, prazos e tributação dos produtos ficam na página Fiscal.</p>
+          <RouterLink :to="{ name: 'admin-fiscal' }" class="fiscal-link">Abrir Fiscal →</RouterLink>
         </div>
       </section>
 
@@ -173,6 +167,7 @@ import { resetTenantData } from '@/db/seed'
 import { firebaseEnabled } from '@/firebase'
 import { parseComandaCode } from '@/lib/comanda'
 import { roleLabels } from '@/lib/format'
+import { ambienteLabels } from '@/fiscal/codes'
 import AppButton  from '@/components/ui/AppButton.vue'
 import AppBadge   from '@/components/ui/AppBadge.vue'
 import AppConfirm from '@/components/ui/AppConfirm.vue'
@@ -191,7 +186,7 @@ function update(patch: Partial<Settings>) {
     .catch(() => toast.add('Não foi possível salvar a configuração.', 'error'))
 }
 
-type NumericKey = 'warnMinutes' | 'lateMinutes' | 'tables' | 'serviceFeePercent' | 'comandaMin' | 'comandaMax' | 'nfceSeries'
+type NumericKey = 'warnMinutes' | 'lateMinutes' | 'tables' | 'serviceFeePercent' | 'comandaMin' | 'comandaMax'
 
 function numberSetting(key: NumericKey, e: Event) {
   const v = Math.round(Number((e.target as HTMLInputElement).value))
@@ -358,4 +353,5 @@ const pinOf = (pin?: string) => (firebaseEnabled || !pin ? '••••' : pin)
 }
 
 .panel--danger { border-color: var(--color-danger-soft); }
+.fiscal-link { color: var(--color-accent-text); font-weight: 500; }
 </style>
