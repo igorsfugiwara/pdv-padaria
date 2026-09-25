@@ -95,14 +95,18 @@ export default async (req: Request): Promise<Response> => {
       })
     }
 
-    const token = tokenFor(tenant, action === 'emitir' ? (body.request as NfceRequest)?.ambiente ?? ambiente : ambiente)
-    if (!token) return json(412, { erro: `Token da Focus NFe não configurado para ${tenant} em ${ambiente}` })
+    const missingToken = (a: Ambiente) => json(412, { erro: `Token da Focus NFe não configurado para ${tenant} em ${a}` })
 
     if (action === 'emitir') {
+      // Primeiro a conferência da nota; só depois o provedor
       const request = body.request as NfceRequest
       if (!request || request.tenant !== tenant) return json(400, { erro: 'Nota de outra loja' })
+      if (request.ambiente !== 'homologacao' && request.ambiente !== 'producao') return json(400, { erro: 'Ambiente inválido' })
       const errors = checkRequest(request)
       if (errors.length) return json(422, { erro: 'Nota não confere', detalhes: errors })
+
+      const token = tokenFor(tenant, request.ambiente)
+      if (!token) return missingToken(request.ambiente)
 
       const res = await focus('POST', request.ambiente, token, `/nfce?ref=${encodeURIComponent(request.ref)}`, toFocusPayload(request))
       if (res.ok) return json(200, fromFocusResponse(res.data, res.base))
@@ -114,6 +118,8 @@ export default async (req: Request): Promise<Response> => {
 
     const ref = String(body.ref ?? '')
     if (!/^[A-Za-z0-9_-]{6,60}$/.test(ref)) return json(400, { erro: 'Referência inválida' })
+    const token = tokenFor(tenant, ambiente)
+    if (!token) return missingToken(ambiente)
 
     if (action === 'consultar') {
       const res = await focus('GET', ambiente, token, `/nfce/${encodeURIComponent(ref)}`)
